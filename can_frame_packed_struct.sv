@@ -1,66 +1,91 @@
-module register_file;
-  parameter int NUM_REGS = 8;
-  parameter int REG_WIDTH = 32;
-  localparam int ADDR_W = $clog2(NUM_REGS);
+module can_frame_exercise;
   
-  logic [REG_WIDTH-1:0] regs [NUM_REGS];  // Unpacked array of packed registers
+  typedef enum logic [1:0] {
+    DATA_FRAME   = 2'b00,
+    REMOTE_FRAME = 2'b01,
+    ERROR_FRAME  = 2'b10,
+    OVERLOAD     = 2'b11
+  } frame_type_t;
   
-  function void write_reg(logic [ADDR_W-1:0] addr, logic [REG_WIDTH-1:0] data);
-    if (addr < NUM_REGS) begin
-      regs[addr] = data;
-      $display("WRITE: reg[%0d] = 0x%h", addr, data);
-    end else
-      $display("ERROR: Address %0d out of bounds (max %0d)", addr, NUM_REGS-1);
-  endfunction
+  typedef struct packed {
+    frame_type_t  frame_type;
+    logic         ide;
+    logic [28:0]  id;
+    logic [3:0]   dlc;
+    logic [63:0]  data;
+  } can_frame_t;
   
-  function logic [REG_WIDTH-1:0] read_reg(logic [ADDR_W-1:0] addr);
-    if (addr < NUM_REGS) begin
-      $display("READ:  reg[%0d] = 0x%h", addr, regs[addr]);
-      return regs[addr];
-    end else begin
-      $display("ERROR: Address %0d out of bounds", addr);
-      return 'x;  // Return X for invalid read
+  function bit validate_frame(can_frame_t f);
+    // Rule 1: DLC must be 0-8
+    if (f.dlc > 8) begin
+      $display("  FAIL: DLC = %0d (must be 0-8)", f.dlc);
+      return 0;
     end
+    
+    // Rule 2: Standard frame ID must fit in 11 bits
+    if (f.ide == 0 && f.id[28:11] != 0) begin
+      $display("  FAIL: Standard frame but ID uses extended bits");
+      return 0;
+    end
+    
+    // Rule 3: Remote frame should have no data
+    if (f.frame_type == REMOTE_FRAME && f.data != 0) begin
+      $display("  FAIL: Remote frame has non-zero data");
+      return 0;
+    end
+    
+    // Rule 4: Only bytes up to DLC should have data
+    for (int i = f.dlc; i < 8; i++) begin
+      if (f.data[i*8 +: 8] != 0) begin
+        $display("  FAIL: Data byte %0d non-zero but DLC=%0d", i, f.dlc);
+        return 0;
+      end
+    end
+    
+    return 1;
   endfunction
   
-  function void display_all();
-    $display("\n=== Register File Contents ===");
-    $display("Config: %0d regs x %0d bits, addr width = %0d", 
-              NUM_REGS, REG_WIDTH, ADDR_W);
-    for (int i = 0; i < NUM_REGS; i++)
-      $display("  reg[%0d] = 0x%h", i, regs[i]);
-    $display("==============================\n");
+  function void display_frame(can_frame_t f);
+    $display("=== CAN Frame ===");
+    $display("  Type : %s", f.frame_type.name());
+    $display("  IDE  : %s", f.ide ? "Extended(29-bit)" : "Standard(11-bit)");
+    if (f.ide)
+      $display("  ID   : 0x%h", f.id);
+    else
+      $display("  ID   : 0x%h", f.id[10:0]);
+    $display("  DLC  : %0d", f.dlc);
+    $display("  Data : 0x%h", f.data);
+    $display("  Bits : %0d", $bits(f));
   endfunction
   
   initial begin
-    logic [REG_WIDTH-1:0] readback;
+    can_frame_t frame1, frame2, frame3;
     
-    // Initialize all regs to 0
-    foreach (regs[i]) regs[i] = '0;
+    frame1.frame_type = DATA_FRAME;
+    frame1.ide = 0;
+    frame1.id = 29'h0000_07FF;
+    frame1.dlc = 4'd4;
+    frame1.data = 64'h00000000_DEADBEEF;
     
-    display_all();
+    frame2.frame_type = DATA_FRAME;
+    frame2.ide = 0;
+    frame2.id = 29'h0000_0100;
+    frame2.dlc = 4'd10;
+    frame2.data = 64'h0;
     
-    // Write pattern
-    write_reg(0, 32'hDEADBEEF);
-    write_reg(3, 32'hCAFEBABE);
-    write_reg(7, 32'h12345678);
+    frame3.frame_type = DATA_FRAME;
+    frame3.ide = 0;
+    frame3.id = 29'h1FFF_FFFF;
+    frame3.dlc = 4'd2;
+    frame3.data = 64'h0000_0000_0000_AABB;
     
-    // Read back and verify
-    readback = read_reg(0);
-    $display("Verify reg[0]: %s", (readback === 32'hDEADBEEF) ? "PASS" : "FAIL");
+    display_frame(frame1);
+    $display("  Valid: %s\n", validate_frame(frame1) ? "YES" : "NO");
     
-    readback = read_reg(3);
-    $display("Verify reg[3]: %s", (readback === 32'hCAFEBABE) ? "PASS" : "FAIL");
+    display_frame(frame2);
+    $display("  Valid: %s\n", validate_frame(frame2) ? "YES" : "NO");
     
-    // Read unwritten register (should be 0)
-    readback = read_reg(5);
-    $display("Verify reg[5] unwritten: %s", (readback === '0) ? "PASS" : "FAIL");
-    
-    display_all();
-    
-    // Overwrite and verify
-    write_reg(0, 32'hAAAABBBB);
-    readback = read_reg(0);
-    $display("Verify overwrite: %s", (readback === 32'hAAAABBBB) ? "PASS" : "FAIL");
+    display_frame(frame3);
+    $display("  Valid: %s\n", validate_frame(frame3) ? "YES" : "NO");
   end
 endmodule
