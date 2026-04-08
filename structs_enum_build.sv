@@ -40,6 +40,63 @@ module your_struct;
 			return 0;
 		end
 		
+		// Check stop bit
+		if (f.stop_bit !== 1) begin
+		  $display("  FAIL: stop bit = %b (expected 1)", f.stop_bit);
+		  return 0;
+		end
+		
+		// Check parity
+		if (ptype == PARITY_EVEN) begin
+		  if (f.parity !== calc_even_parity(f.data)) begin
+			$display("  FAIL: even parity incorrect");
+			return 0;
+		  end
+		end else if (ptype == PARITY_ODD) begin
+		  if (f.parity !== ~calc_even_parity(f.data)) begin
+			$display("  FAIL: odd parity incorrect");
+			return 0;
+		  end
+		end
+		// PARITY_NONE: skip check
+    return 1;
+  endfunction
+  
+	function void display_frame(uart_struct_t f);
+    $display("  Start=%b Data=%h Parity=%b Stop=%b (raw=%b)", 
+              f.start_bit, f.data, f.parity, f.stop_bit, f);
+  endfunction
+  
+  initial begin 
+	uart_struct_t good_frame,bad_frame;
+	
+	// Valid frame 
+	good_frame.start_bit = 1'b0;
+	good_frame.data = 8'hAB;
+	good_frame.parity = calc_parity(good_frame.data);
+	good_frame.stop_bit = 1'b1;
+	
+	// Display Good Frame 
+	$display("Good Frame:");
+	display_frame(good_frame);
+	$display("  Valid: %s\n", validate(good_frame, PARITY_EVEN) ? "PASS" : "FAIL");
+    
+    // Invalid frame: wrong parity
+    bad_frame.start_bit = 0;
+    bad_frame.data = 8'hA5;
+    bad_frame.parity = 1;   // Wrong! Even parity of A5 should be 0
+    bad_frame.stop_bit = 1;
+    
+    $display("Bad frame:");
+    display_frame(bad_frame);
+    $display("  Valid: %s\n", validate(bad_frame, EVEN) ? "PASS" : "FAIL");
+    
+    // Invalid frame: wrong stop bit
+    bad_frame.stop_bit = 0;
+    $display("Bad stop bit:");
+    display_frame(bad_frame);
+    $display("  Valid: %s", validate(bad_frame, EVEN) ? "PASS" : "FAIL");
+  end
 		
 		
 	
